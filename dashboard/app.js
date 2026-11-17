@@ -8,6 +8,7 @@
   if (!DATA) return;
   var app = document.getElementById('board');
   var state = { q: '', category: 'all', chain: 'all', scope: 'all', tab: 'pre-token', sort: 'implied', dir: -1, selected: null };
+  state.risk = 'all';
 
   var usd = new Intl.NumberFormat('en-US', { style: 'currency', currency: 'USD', maximumFractionDigits: 0 });
   function fmtUsd(n) {
@@ -47,6 +48,21 @@
     var at = s.indexOf(' Cost: ');
     var action = at >= 0 ? s.slice(0, at) : s;
     return action.length > 90 ? action.slice(0, 87) + '...' : action;
+  }
+
+  // The risk read and the sized plan arrive in each row from main.ts (lib/risk.ts
+  // and lib/farmplan.ts). The page only renders them, and an older data.js that
+  // carries neither field still renders with a plain fallback instead of breaking.
+  function riskOf(row) { return row.risk || { score: 0, band: 'low', reasons: [] }; }
+  function planOf(row) { return row.farmPlan || null; }
+  function riskBadge(row) {
+    var r = riskOf(row);
+    return el('span', { class: 'risk-badge risk-' + r.band, title: (r.reasons[0] || 'No risk read for this protocol.') }, r.band + ' ' + r.score);
+  }
+  function planLine(row) {
+    var p = planOf(row);
+    if (!p) return 'n/a';
+    return '$' + p.capitalUsd + ' ' + p.sizeBand + ' · hold ' + p.holdDays + 'd · EV $' + p.evLowUsd + '–$' + p.evHighUsd;
   }
 
   function el(tag, attrs) {
@@ -129,6 +145,7 @@
     if (params.get('category')) state.category = params.get('category');
     if (params.get('chain')) state.chain = params.get('chain');
     if (params.get('scope')) state.scope = params.get('scope');
+    if (params.get('risk')) state.risk = params.get('risk');
   }
   function writeHash() {
     var params = new URLSearchParams();
@@ -136,6 +153,7 @@
     if (state.category !== 'all') params.set('category', state.category);
     if (state.chain !== 'all') params.set('chain', state.chain);
     if (state.scope !== 'all') params.set('scope', state.scope);
+    if (state.risk !== 'all') params.set('risk', state.risk);
     if (state.selected) params.set('p', state.selected);
     var next = params.toString();
     if (next) window.history.replaceState(null, '', '#' + next);
@@ -152,6 +170,7 @@
       if (state.chain !== 'all' && (r.chains || []).indexOf(state.chain) < 0) return false;
       if (state.scope === 'watchlist' && !isWatchlist(r)) return false;
       if (state.scope === 'early' && isWatchlist(r)) return false;
+      if (state.risk !== 'all' && (!r.risk || r.risk.band !== state.risk)) return false;
       if (!q) return true;
       var hay = [r.name, r.slug, r.category, (r.chains || []).join(' ')].join(' ').toLowerCase();
       return hay.indexOf(q) >= 0;
@@ -164,6 +183,7 @@
       if (key === 'name') { av = a.name.toLowerCase(); bv = b.name.toLowerCase(); }
       else if (key === 'tvl') { av = a.tvl_usd; bv = b.tvl_usd; }
       else if (key === 'growth') { av = a.change_7d === null ? -Infinity : a.change_7d; bv = b.change_7d === null ? -Infinity : b.change_7d; }
+      else if (key === 'risk') { av = a.risk ? a.risk.score : 0; bv = b.risk ? b.risk.score : 0; }
       else if (key === 'age') { av = a.age_days === null ? Infinity : a.age_days; bv = b.age_days === null ? Infinity : b.age_days; }
       else { av = a.implied_value_usd; bv = b.implied_value_usd; }
       if (av < bv) return -state.dir;
@@ -219,6 +239,11 @@
       el('option', { value: 'early', text: 'Early (below floor) only', selected: state.scope === 'early' ? 'selected' : null })
     );
     scopeSelect.addEventListener('change', function () { state.scope = scopeSelect.value; writeHash(); render(); });
+    var riskSelect = el('select', { id: 'risk', 'aria-label': 'Filter by risk band' },
+      el('option', { value: 'all', text: 'All risk bands' }),
+      ['low', 'medium', 'high'].map(function (b) { return el('option', { value: b, text: b.charAt(0).toUpperCase() + b.slice(1) + ' risk', selected: state.risk === b ? 'selected' : null }); })
+    );
+    riskSelect.addEventListener('change', function () { state.risk = riskSelect.value; writeHash(); render(); });
     var pre = el('button', { type: 'button', 'aria-pressed': state.tab === 'pre-token' ? 'true' : 'false', text: 'Pre-token', onclick: function () { state.tab = 'pre-token'; render(); } });
     var live = el('button', { type: 'button', 'aria-pressed': state.tab === 'live' ? 'true' : 'false', text: 'Live token', onclick: function () { state.tab = 'live'; render(); } });
     return el('div', { class: 'controls' },
@@ -226,6 +251,7 @@
       el('div', { class: 'field' }, el('label', { for: 'category', text: 'Category' }), select),
       el('div', { class: 'field' }, el('label', { for: 'chain', text: 'Chain' }), chainSelect),
       el('div', { class: 'field' }, el('label', { for: 'scope', text: 'Scope' }), scopeSelect),
+      el('div', { class: 'field' }, el('label', { for: 'risk', text: 'Risk' }), riskSelect),
       el('div', { class: 'field' }, el('span', { class: 'sub', text: 'Token status' }), el('div', { class: 'tabs' }, pre, live)),
       el('span', { class: 'count', text: state.tab === 'pre-token' ? rows().length + ' rows shown' : DATA.live.length + ' live-token protocols' })
     );
@@ -272,6 +298,7 @@
           el('div', { class: 'bar', 'aria-hidden': 'true' }, el('i', { style: 'width:' + Math.max(3, Math.round((r.implied_value_usd / max) * 100)) + '%' })),
           el('span', { class: 'num', text: fmtUsd(r.implied_value_usd) })
         )),
+        el('td', null, riskBadge(r)),
         el('td', null, el('span', { class: 'farm-cell', text: mainFarmAction(r) })),
         el('td', null, el('span', { class: 'status', text: 'no token' }))
       );
@@ -288,6 +315,7 @@
             sortHeader('growth', '7d'),
             sortHeader('age', 'Age'),
             sortHeader('implied', 'Implied value'),
+            sortHeader('risk', 'Risk'),
             el('th', { scope: 'col', text: 'Farm it' }),
             el('th', { scope: 'col', text: 'Token' })
           )),
@@ -372,6 +400,36 @@
   var dialog = el('dialog', { class: 'detail', id: 'detail', 'aria-labelledby': 'detail-title' });
   dialog.addEventListener('close', function () { state.selected = null; writeHash(); });
 
+  // Detail sections for the risk read and the sized plan. Each renders only what
+  // main.ts computed for the row; an older data.js without those fields shows a
+  // short note instead of an empty section.
+  function riskDetailSection(row) {
+    var r = riskOf(row);
+    var items = (r.reasons || []).map(function (reason) { return el('li', { text: reason }); });
+    return el('section', { class: 'detail-section' },
+      el('h3', { text: 'Risk: ' + r.band + ' (' + r.score + '/100)' }),
+      el('p', { class: 'sub', text: 'Five named factors add up to the score: chain concentration, track record, seven-day momentum, book depth and category-relative strength.' }),
+      items.length > 0 ? el('ul', { class: 'reasons' }, items) : el('p', { class: 'sub', text: 'No risk read was computed for this protocol.' })
+    );
+  }
+  function sizedPlanDetailSection(row) {
+    var p = planOf(row);
+    if (!p) return el('section', { class: 'detail-section' }, el('h3', { text: 'Sized farm plan' }), el('p', { class: 'sub', text: 'No sized plan was computed for this protocol.' }));
+    return el('section', { class: 'detail-section' },
+      el('h3', { text: 'Sized farm plan' }),
+      el('div', { class: 'plan-grid' },
+        el('div', null, el('span', { text: 'Position' }), el('b', { class: 'num', text: '$' + p.capitalUsd + ' (' + p.sizeBand + ')' })),
+        el('div', null, el('span', { text: 'Expected value' }), el('b', { class: 'num', text: '$' + p.evLowUsd + '–$' + p.evHighUsd })),
+        el('div', null, el('span', { text: 'Middle outcome' }), el('b', { class: 'num', text: '$' + p.evMidUsd })),
+        el('div', null, el('span', { text: 'Return on capital' }), el('b', { class: 'num', text: p.roiMultiple + 'x (' + p.roiBand + ')' })),
+        el('div', null, el('span', { text: 'Hold at least' }), el('b', { class: 'num', text: p.holdDays + ' days' })),
+        el('div', null, el('span', { text: 'Cadence' }), el('b', { text: p.cadence }))
+      ),
+      el('p', { class: 'sub', text: p.rationale }),
+      el('p', { class: 'sub', text: 'Expected value assumes 5% of the implied value reaches farmers, split among about 50,000 active farmers; the range runs from a quarter to two and a half times the middle share.' })
+    );
+  }
+
   function openDetail(slug) {
     var row = DATA.rows.filter(function (r) { return r.slug === slug; })[0];
     if (!row) return;
@@ -420,6 +478,8 @@
         return el('li', null, el('b', { text: action }), el('span', { class: 'cost', text: tail }));
       }))
     ));
+    dialog.appendChild(riskDetailSection(row));
+    dialog.appendChild(sizedPlanDetailSection(row));
     if (typeof dialog.showModal === 'function') {
       if (!dialog.open) dialog.showModal();
     } else {

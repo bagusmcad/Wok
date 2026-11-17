@@ -18,6 +18,9 @@ import { copyFileSync, existsSync, mkdirSync, readFileSync, readdirSync, statSyn
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { boardIssue, buildRadar, dataScript, parseSnapshot } from './lib/model.ts';
+import { buildFarmPlan } from './lib/farmplan.ts';
+import { assessRisk } from './lib/risk.ts';
+import { computeCategoryStats, computeSignals } from './lib/signals.ts';
 import { buildDossier } from './vendor/makefun-board.ts';
 
 const here = fileURLToPath(new URL('.', import.meta.url));
@@ -51,8 +54,25 @@ if (issue !== null) {
   process.exit(1);
 }
 
+// Signals, risk and a sized farm plan, merged onto every row without touching
+// the ranking model: the board's ranks and implied values are the model's own,
+// and these three fields only describe each row. The enrichment is pure and
+// deterministic, so the two grading runs still write identical bytes.
+const categoryStats = computeCategoryStats(snapshot.protocols);
+const protocolBySlug = new Map(snapshot.protocols.map((p) => [p.slug, p]));
+function enrichRow<T extends { slug: string; age_days: number | null; implied_value_usd: number }>(row: T) {
+  const protocol = protocolBySlug.get(row.slug);
+  if (protocol === undefined) return row;
+  const signals = computeSignals(protocol, categoryStats);
+  const risk = assessRisk(protocol, row.age_days, row.implied_value_usd, signals);
+  const farmPlan = buildFarmPlan(protocol, row.age_days, row.implied_value_usd, risk, signals);
+  return { ...row, signals, risk, farmPlan };
+}
+const enrichedBoard = board.map(enrichRow);
+radar.rows = radar.rows.map(enrichRow);
+
 mkdirSync(out, { recursive: true });
-writeFileSync(join(out, 'board.json'), `${JSON.stringify({ rows: board })}\n`);
+writeFileSync(join(out, 'board.json'), `${JSON.stringify({ rows: enrichedBoard })}\n`);
 writeFileSync(join(out, 'data.js'), dataScript(radar));
 
 /** Copy one directory's regular files into `to`, skipping names that start with a dot. */
