@@ -1,5 +1,7 @@
-// A working token-radar-01 entry (Node 22, standard library only), model radar-2: the base
-// multiple is calibrated per category on the snapshot's live-token market caps.
+// A working token-radar-01 entry (Node 22, standard library only), model radar-3: the base
+// multiple is calibrated per category on the snapshot's live-token market caps, exchanges are
+// left out of the calibration, every row carries a P25-P75 band, and the board is validated
+// by a leave-one-out backtest over the live-token set (see lib/backtest.ts).
 //
 // The program reads the sealed snapshot from /input/snapshot.json (or --input <file|dir>), scores every
 // pre-token protocol with the model in lib/model.ts, writes the ranked board to /output/board.json, and
@@ -17,7 +19,8 @@
 import { copyFileSync, existsSync, mkdirSync, readFileSync, readdirSync, statSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { boardIssue, buildRadar, dataScript, parseSnapshot } from './lib/model.ts';
+import { runLeaveOneOut } from './lib/backtest.ts';
+import { boardIssue, buildRadar, dataScript, MODEL, parseSnapshot } from './lib/model.ts';
 import { buildFarmPlan } from './lib/farmplan.ts';
 import { assessRisk } from './lib/risk.ts';
 import { computeCategoryStats, computeSignals } from './lib/signals.ts';
@@ -47,7 +50,8 @@ if (!existsSync(inputFile)) {
 const out = arg('output', process.env.MAKEFUN_OUTPUT_DIR ?? '/output');
 
 const snapshot = parseSnapshot(readFileSync(inputFile, 'utf8'));
-const { board, radar } = buildRadar(snapshot);
+const backtest = runLeaveOneOut(snapshot, MODEL);
+const { board, radar } = buildRadar(snapshot, MODEL, backtest);
 const issue = boardIssue(board, snapshot);
 if (issue !== null) {
   process.stderr.write(`token radar: the model wrote a board the gate refuses: ${issue}\n`);
@@ -107,6 +111,8 @@ for (const name of shots) {
 writeFileSync(join(out, 'dossier.json'), buildDossier(out, { text_max_bytes: TEXT_MAX_BYTES, screenshots: SCREENSHOT_CAPS, dashboard: { max_files: 400, max_bytes: 4_194_304 } }));
 
 process.stdout.write(
-  `token radar: ${snapshot.protocols.length} protocols, ${snapshot.watchlist.length} on the watchlist, ${board.length} rows scored (${radar.early_size} early, ${radar.live_size} live set aside)\n` +
+  `token radar: ${snapshot.protocols.length} protocols, ${snapshot.watchlist.length} on the watchlist, ${board.length} rows scored (${radar.early_size} early, ${radar.above_size} above the floor the watchlist left out, ${radar.live_size} live set aside)\n` +
+    `token radar: backtest (leave-one-out, n=${backtest.n}): ${(backtest.within_2x * 100).toFixed(1)}% within 2x, ${(backtest.within_3x * 100).toFixed(1)}% within 3x, Spearman ${backtest.spearman}, median error ${backtest.median_error_multiple}x\n` +
+    `token radar: audit sets aside ${radar.audit.length} pre-token protocols (${radar.live_set_aside} live-token protocols set aside with their market caps)\n` +
     `token radar: wrote ${join(out, 'board.json')}, ${join(out, 'data.js')}, ${join(out, 'dashboard')} (3 files), ${join(out, 'screenshots')} (${shots.length} images) and ${join(out, 'dossier.json')}\n`,
 );

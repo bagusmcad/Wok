@@ -169,3 +169,13 @@ tbody tr[data-selected="true"] { background: color-mix(in srgb, var(--accent) 8%
 .plan-grid .num { font-size: 14px; }
 .reasons { margin: var(--step-2) 0 var(--step-1) var(--step-5); display: grid; gap: var(--step-2); }
 .reasons li { line-height: 1.45; }
+
+/* Backtest, audit and the uncertainty band (radar-3). The sector table's rows
+   are buttons in all but name: pointer + hover wash, like the board's rows. */
+.model table.cal tbody tr { cursor: pointer; }
+.model table.cal tbody tr:hover { background: color-mix(in srgb, var(--accent) 7%, var(--surface)); }
+.scenario { display: flex; align-items: center; gap: var(--step-3); margin: var(--step-2) 0; }
+.scenario input[type="range"] { flex: 1; accent-color: var(--accent); }
+.scenario .sub { white-space: nowrap; }
+.panel .facts { border-left: 0; padding-left: 0; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); margin: var(--step-3) 0; }
+.panel .fact { flex-direction: column; align-items: flex-start; gap: 2px; }

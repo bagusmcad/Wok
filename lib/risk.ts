@@ -4,6 +4,10 @@
 // the reasons alongside the number so the board can show its working. Pure and
 // deterministic: the same protocol always scores the same, with no clock, no
 // randomness and no network. Risk never changes a row's rank or implied value.
+//
+// No row scores zero: every pre-token protocol carries a baseline launch risk,
+// because a token that does not exist yet is itself unproven, so the lowest
+// score on the board is the baseline, not a clean bill of health.
 
 import type { SnapshotProtocol } from './model.ts';
 import type { ProtocolSignals } from './signals.ts';
@@ -38,6 +42,25 @@ export function bandLabel(band: RiskBand): string {
   if (band === 'low') return 'Low';
   if (band === 'medium') return 'Medium';
   return 'High';
+}
+
+/**
+ * Baseline launch risk: the one factor that always fires. A protocol with no
+ * token yet is unproven as a launch, whatever its record says, so the score
+ * never reads zero at the top of the board. The baseline is small and varies
+ * with what makes a launch more or less proven: four points for a mature
+ * protocol spread across chains, two more on a single chain (one network
+ * carries the whole launch), two more when it is younger than a year or its
+ * age is unknown (less time to prove the launch will happen at all).
+ */
+function baselineFactor(protocol: SnapshotProtocol, ageDays: number | null): RiskFactor {
+  const points = 4 + (protocol.chains.length <= 1 ? 2 : 0) + (ageDays === null || ageDays < 365 ? 2 : 0);
+  return {
+    points,
+    reason:
+      `No token yet, so the launch itself is unproven: a baseline risk of ${points} points ` +
+      `before any other factor is counted.`,
+  };
 }
 
 /**
@@ -104,8 +127,9 @@ function weakSignalFactor(signals: ProtocolSignals): RiskFactor | null {
 
 /**
  * The full assessment: add every factor that fires, cap the total at 100, and
- * keep the reasons in the order the factors fired. A protocol with no factor
- * firing gets one clean-bill sentence instead of an empty list.
+ * keep the reasons in the order the factors fired, the baseline first. The
+ * baseline always fires, so the reasons are never empty and the score never
+ * reads zero.
  */
 export function assessRisk(
   protocol: SnapshotProtocol,
@@ -115,6 +139,7 @@ export function assessRisk(
 ): RiskAssessment {
   void _impliedValueUsd;
   const factors: (RiskFactor | null)[] = [
+    baselineFactor(protocol, ageDays),
     concentrationFactor(protocol),
     trackRecordFactor(ageDays),
     momentumFactor(protocol),
@@ -127,11 +152,7 @@ export function assessRisk(
     0,
     100,
   );
-  const reasons =
-    fired.length > 0
-      ? fired.map((f) => f.reason)
-      : ['No single risk factor stands out: spread across chains, with a record and a steady seven days.'];
-  return { score, band: bandFor(score), reasons };
+  return { score, band: bandFor(score), reasons: fired.map((f) => f.reason) };
 }
 
 /**
