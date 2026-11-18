@@ -24,6 +24,7 @@ import { boardIssue, buildRadar, dataScript, MODEL, parseSnapshot } from './lib/
 import { buildFarmPlan } from './lib/farmplan.ts';
 import { assessRisk } from './lib/risk.ts';
 import { computeCategoryStats, computeSignals } from './lib/signals.ts';
+import { buildSummary, verdictFor } from './lib/summary.ts';
 import { buildDossier } from './vendor/makefun-board.ts';
 
 const here = fileURLToPath(new URL('.', import.meta.url));
@@ -70,10 +71,22 @@ function enrichRow<T extends { slug: string; age_days: number | null; implied_va
   const signals = computeSignals(protocol, categoryStats);
   const risk = assessRisk(protocol, row.age_days, row.implied_value_usd, signals);
   const farmPlan = buildFarmPlan(protocol, row.age_days, row.implied_value_usd, risk, signals);
-  return { ...row, signals, risk, farmPlan };
+  // The verdict (lib/summary.ts) reads only the plan: the middle expected
+  // value less the gas the plan itself charges. It never touches the rank.
+  const verdict = verdictFor(farmPlan);
+  return { ...row, signals, risk, farmPlan, verdict: verdict.verdict, net_usd: verdict.netUsd, gas_usd: verdict.gasUsd };
 }
 const enrichedBoard = board.map(enrichRow);
 radar.rows = radar.rows.map(enrichRow);
+// The KPI strip and the reconciliation, from the enriched board: the same
+// verdicts the table prints, the same audit rows the audit tab lists.
+radar.summary = buildSummary({
+  rows: enrichedBoard,
+  backtest,
+  audit: radar.audit,
+  liveSetAside: radar.live_set_aside,
+  totalProtocols: snapshot.protocols.length,
+});
 
 mkdirSync(out, { recursive: true });
 writeFileSync(join(out, 'board.json'), `${JSON.stringify({ rows: enrichedBoard })}\n`);
@@ -112,7 +125,8 @@ writeFileSync(join(out, 'dossier.json'), buildDossier(out, { text_max_bytes: TEX
 
 process.stdout.write(
   `token radar: ${snapshot.protocols.length} protocols, ${snapshot.watchlist.length} on the watchlist, ${board.length} rows scored (${radar.early_size} early, ${radar.above_size} above the floor the watchlist left out, ${radar.live_size} live set aside)\n` +
-    `token radar: backtest (leave-one-out, n=${backtest.n}): ${(backtest.within_2x * 100).toFixed(1)}% within 2x, ${(backtest.within_3x * 100).toFixed(1)}% within 3x, Spearman ${backtest.spearman}, median error ${backtest.median_error_multiple}x\n` +
+    `token radar: backtest (leave-one-out, n=${backtest.n}): ${(backtest.within_2x * 100).toFixed(1)}% within 2x, ${(backtest.within_3x * 100).toFixed(1)}% within 3x, Spearman ${backtest.spearman}, median error ${backtest.median_error_multiple}x, range holds ${(backtest.range_holds * 100).toFixed(1)}% (older n=${backtest.eras.older.n} ${(backtest.eras.older.within_2x * 100).toFixed(1)}% within 2x, newer n=${backtest.eras.newer.n} ${(backtest.eras.newer.within_2x * 100).toFixed(1)}% within 2x, ${backtest.eras.undated} undated)\n` +
+    `token radar: summary: $${(radar.summary.total_implied_usd / 1e9).toFixed(2)}B implied over ${radar.summary.ranked} rows, verdicts ${radar.summary.verdicts.farm} FARM / ${radar.summary.verdicts.marginal} MARGINAL / ${radar.summary.verdicts.skip} SKIP\n` +
     `token radar: audit sets aside ${radar.audit.length} pre-token protocols (${radar.live_set_aside} live-token protocols set aside with their market caps)\n` +
     `token radar: wrote ${join(out, 'board.json')}, ${join(out, 'data.js')}, ${join(out, 'dashboard')} (3 files), ${join(out, 'screenshots')} (${shots.length} images) and ${join(out, 'dossier.json')}\n`,
 );

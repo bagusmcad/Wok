@@ -178,10 +178,26 @@ export interface BacktestCase {
   slug: string;
   name: string;
   category: string | null;
+  chains: string[];
+  /** The listing date the case is split into eras by, or null when the snapshot records none. */
+  listed_at: string | null;
   predicted_usd: number;
+  /** The bear case: the same product with the category's P25 ratio as the multiple. */
+  predicted_low_usd: number;
+  /** The bull case: the same product with the category's P75 ratio as the multiple. */
+  predicted_high_usd: number;
   actual_usd: number;
   /** The larger of predicted/actual, so 1 is exact and 5 is five times off either way. */
   error_multiple: number;
+}
+
+/** One half of the era split: how many cases it holds and how well the model did on them. */
+export interface EraStats {
+  n: number;
+  /** Share of the half's predictions within twice the actual market cap, 0..1. */
+  within_2x: number;
+  /** The middle error multiple across the half. */
+  median_error_multiple: number;
 }
 
 /** The whole leave-one-out result, ready for the dashboard and the README. */
@@ -196,6 +212,12 @@ export interface BacktestResult {
   spearman: number;
   /** The middle error multiple across the scored set. */
   median_error_multiple: number;
+  /** Share of held-out market caps that land inside the printed P25-P75 band, 0..1. */
+  range_holds: number;
+  /** The older half and the newer half of the dated cases, by listing date, and how many cases record no date at all. */
+  eras: { older: EraStats; newer: EraStats; undated: number };
+  /** Every scored case, by slug, so the dashboard can recompute the backtest per slice. */
+  cases: BacktestCase[];
   /** The five worst predictions, largest error first. */
   worst: BacktestCase[];
   /** The five best predictions, smallest error first. */
@@ -238,6 +260,14 @@ export interface RadarRow {
   maturity_multiplier: number;
   category_multiple: number;
   chain_factor: number;
+  /** The farm steps (lib/model.ts farmSteps): the page renders these instead of re-deriving them. */
+  farm_steps: string[];
+  /** The farm verdict (lib/summary.ts): FARM when the expected value clears gas by $25 or more. */
+  verdict?: 'FARM' | 'MARGINAL' | 'SKIP';
+  /** The middle expected value minus the gas the plan itself charges, in dollars. */
+  net_usd?: number;
+  /** The gas the plan itself charges: setup gas plus $2 a week over the hold, in dollars. */
+  gas_usd?: number;
 }
 
 /** A live-token protocol: it already trades, so the board shows the market's own value, not a model's. */
@@ -275,6 +305,8 @@ export interface RadarData {
   audit: AuditRow[];
   /** How many live-token protocols are set aside with their market caps (shown in the Live tab). */
   live_set_aside: number;
+  /** The KPI strip and the reconciliation, computed in main.ts from the enriched board (lib/summary.ts). */
+  summary?: import('./summary.ts').Summary;
 }
 
 /** Why the snapshot is not one this model can score. */
@@ -764,6 +796,7 @@ export function radarRow(row: BoardRow): RadarRow {
     maturity_multiplier: row.model.maturity_multiplier,
     category_multiple: row.model.category_multiple,
     chain_factor: row.model.chain_factor,
+    farm_steps: row.farm_steps,
   };
 }
 
@@ -796,6 +829,13 @@ export function buildRadar(snapshot: Snapshot, model: ModelConstants = MODEL, ba
       within_3x: 0,
       spearman: 0,
       median_error_multiple: 0,
+      range_holds: 0,
+      eras: {
+        older: { n: 0, within_2x: 0, median_error_multiple: 0 },
+        newer: { n: 0, within_2x: 0, median_error_multiple: 0 },
+        undated: 0,
+      },
+      cases: [],
       worst: [],
       best: [],
       note: 'No backtest was run for this build.',
